@@ -4,6 +4,10 @@ namespace App\Http\Controllers\Code;
 
 use App\Code;
 use App\Http\Controllers\Code\CodeController;
+use http\Env\Request;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Routing\Route;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Input;
 use Illuminate\Support\Facades\Storage;
 
@@ -14,8 +18,9 @@ class VersionController extends CodeController
      */
     public function add(){
 
+        $action = \Illuminate\Support\Facades\Route::currentRouteAction();
         $project_id     = Input::post("project_id","-1");
-        $project_name   = Input::post("project_name","");
+        $version_name   = Input::post("version_name","");
         $redis_desc     = Input::post("redis_desc","");
         $mysql_desc     = Input::post("mysql_desc","");
         $other_desc     = Input::post("other_desc","");
@@ -28,8 +33,12 @@ class VersionController extends CodeController
             return self::format('project_id不允许',401);
         }
 
-        if(empty($project_name)){
+        if(empty($version_name)){
             return self::format('版本名称不能为空',401);
+        }
+
+        if(empty($other_desc)){
+            $other_desc = $version_name;
         }
 
         if(!session("login")){
@@ -39,18 +48,21 @@ class VersionController extends CodeController
         $param = [
             'id'            =>'',
             'project_id'    =>$project_id,
-            'name'          =>$project_name,
+            'name'          =>$version_name,
             'redis_desc'    =>$redis_desc,
             'mysql_desc'    =>$mysql_desc,
             'other_desc'    =>$other_desc,
             'sid'           =>session("login"),
         ];
 
+
         $res = Code::addVersion($param);
+        Code::addLog($param,$res,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"添加版本");
+
 
         if($res && $res['result'] === true){
 
-            if($file->isValid()){
+            if($file && $file->isValid()){
                 //有文件
                 $version_id = $res['data']['id'];
                 $ext = $file->getClientOriginalExtension();
@@ -71,6 +83,7 @@ class VersionController extends CodeController
                 }
 
                 $return = Code::uploadfile($version_id,storage_path()."/app/public/".$filename,session("login"));
+                Code::addLog(['version_id'=>$version_id,'storage_path'=>storage_path()."/app/public/".$filename],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,2,"自动上传文件");
 
                 if($return && $return['result'] === true){
 
@@ -87,8 +100,17 @@ class VersionController extends CodeController
                         }
 
                         $return = Code::versionaudit($version_id,$reason_list,session("login"));
+                        Code::addLog($param,$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,3,"自动提交审核");
+
                         if($return && $return['result'] === true){
 
+                            if(Input::post("username") == self::$admin_username){
+                                $return = Code::versionauditpass($version_id,"审核通过",session("login"));
+                                Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,4,"自动审核通过");
+                                if($return && $return['result'] === true){
+                                    return self::format("自动审核成功",0,['version_id'=>$version_id]);
+                                }
+                            }
                             return self::format("自动提交审核成功",0,['version_id'=>$version_id]);
 
                         }
@@ -123,12 +145,12 @@ class VersionController extends CodeController
     public function edit(){
 
         $version_id     = Input::post("version_id","");
-        $project_name   = Input::post("project_name","");
+        $version_name   = Input::post("version_name","");
         $redis_desc     = Input::post("redis_desc","");
         $mysql_desc     = Input::post("mysql_desc","");
         $other_desc     = Input::post("other_desc","");
 
-        if(empty($project_name)){
+        if(empty($version_name)){
             return self::format('版本名称不能为空',401);
         }
 
@@ -149,7 +171,7 @@ class VersionController extends CodeController
         $param = [
             'id'            =>$version_id,
             'project_id'    =>$version['data']['project_id'],
-            'name'          =>$project_name,
+            'name'          =>$version_name,
             'redis_desc'    =>$redis_desc,
             'mysql_desc'    =>$mysql_desc,
             'other_desc'    =>$other_desc,
@@ -157,6 +179,8 @@ class VersionController extends CodeController
         ];
 
         $res = Code::addVersion($param);
+        Code::addLog($param,$res,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"修改版本信息");
+
 
         if($res && $res['result'] === true){
 
@@ -214,6 +238,8 @@ class VersionController extends CodeController
             }
 
             $return = Code::uploadfile($version_id,storage_path()."/app/public/".$filename,session("login"));
+            Code::addLog(['version_id'=>$version_id,'storage_path'=>storage_path()."/app/public/".$filename],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"上传文件");
+
 
             if($return && $return['result'] === true){
 
@@ -255,6 +281,7 @@ class VersionController extends CodeController
         }
 
         $return = Code::delres($file['data']['list'][0]['id'],session("login"));
+        Code::addLog(['version_id'=>$file['data']['list'][0]['id']],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"删除文件");
 
         if($return && $return['result'] === true){
 
@@ -295,6 +322,8 @@ class VersionController extends CodeController
         }
 
         $return = Code::versionaudit($version_id,$reason_list,session("login"));
+        Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"提交审核");
+
         if($return && $return['result'] === true){
 
             return self::format("提交审核成功",0,['version_id'=>$version_id]);
@@ -329,11 +358,18 @@ class VersionController extends CodeController
             return self::format('project_id不能为空',401);
         }
 
-        $list = Code::getversionlist($project_id,$version_id,session("login"));
-        if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
-            return self::format('未找到对应版本',401);
+        $admin = self::admin_login();
+        if(!$admin){
+            return self::format("审核失败",406,['version_id'=>$version_id]);
         }
+        $list = Code::getversionlist($project_id,$version_id,session("login"));
+
         if(Input::post("username") != self::$admin_username){
+
+            if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
+                return self::format('未找到对应版本',401);
+            }
+
             $is_self = false;
             foreach ($list['data']['list'] as $datum) {
                 if($datum['id'] == $version_id){
@@ -348,13 +384,8 @@ class VersionController extends CodeController
             }
         }
 
-
-        $admin = self::admin_login();
-        if(!$admin){
-            return self::format("审核失败",406,['version_id'=>$version_id]);
-        }
-
         $return = Code::versionauditpass($version_id,"审核通过",session("admin_login"));
+        Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"审核通过");
 
         if($return && $return['result'] === true){
 
@@ -390,10 +421,12 @@ class VersionController extends CodeController
         }
 
         $list = Code::getversionlist($project_id,$version_id,session("login"));
-        if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
-            return self::format('未找到对应版本',401);
-        }
+
         if(Input::post("username") != self::$admin_username){
+            if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
+                return self::format('未找到对应版本',401);
+            }
+
             $is_self = false;
             foreach ($list['data']['list'] as $datum) {
                 if($datum['id'] == $version_id){
@@ -407,13 +440,14 @@ class VersionController extends CodeController
                 return self::format('版本非自己提交',401);
             }
         }
-
         $admin = self::admin_login();
+
         if(!$admin){
             return self::format("审核不通过失败",406,['version_id'=>$version_id]);
         }
 
         $return = Code::versionauditnonpass($version_id,"审核不通过",session("admin_login"));
+        Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"审核不通过");
 
         if($return && $return['result'] === true){
 
@@ -449,10 +483,12 @@ class VersionController extends CodeController
         }
 
         $list = Code::getversionlist($project_id,$version_id,session("login"));
-        if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
-            return self::format('未找到对应版本',401);
-        }
+
         if(Input::post("username") != self::$admin_username){
+            if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
+                return self::format('未找到对应版本',401);
+            }
+
             $is_self = false;
             foreach ($list['data']['list'] as $datum) {
                 if($datum['id'] == $version_id){
@@ -466,13 +502,14 @@ class VersionController extends CodeController
                 return self::format('版本非自己提交',401);
             }
         }
-
         $admin = self::admin_login();
+
         if(!$admin){
             return self::format("测试通过失败",406,['version_id'=>$version_id]);
         }
 
         $return = Code::versiontestpass($version_id,"测试通过",session("admin_login"));
+        Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"测试通过");
 
         if($return && $return['result'] === true){
 
@@ -509,10 +546,12 @@ class VersionController extends CodeController
         }
 
         $list = Code::getversionlist($project_id,$version_id,session("login"));
-        if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
-            return self::format('未找到对应版本',401);
-        }
+
         if(Input::post("username") != self::$admin_username){
+            if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
+                return self::format('未找到对应版本',401);
+            }
+
             $is_self = false;
             foreach ($list['data']['list'] as $datum) {
                 if($datum['id'] == $version_id){
@@ -526,13 +565,14 @@ class VersionController extends CodeController
                 return self::format('版本非自己提交',401);
             }
         }
-
         $admin = self::admin_login();
+
         if(!$admin){
             return self::format("测试不通过失败",406,['version_id'=>$version_id]);
         }
 
         $return = Code::versiontestnonpass($version_id,"测试不通过",session("admin_login"));
+        Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"测试不通过");
 
         if($return && $return['result'] === true){
 
@@ -566,12 +606,12 @@ class VersionController extends CodeController
         if(empty($project_id)){
             return self::format('project_id不能为空',401);
         }
-
         $list = Code::getversionlist($project_id,$version_id,session("login"));
-        if(empty($list)){
-            return self::format('未找到对应版本',401);
-        }
+
         if(Input::post("username") != self::$admin_username){
+            if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
+                return self::format('未找到对应版本',401);
+            }
             $is_self = false;
             foreach ($list['data']['list'] as $datum) {
                 if($datum['id'] == $version_id){
@@ -586,8 +626,12 @@ class VersionController extends CodeController
             }
         }
 
-
-        $return = Code::delversion($version_id,session("login"));
+        $admin = self::admin_login();
+        if(!$admin){
+            return self::format("删除失败",406,['version_id'=>$version_id]);
+        }
+        $return = Code::delversion($version_id,session("admin_login"));
+        Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"删除版本");
 
         if($return && $return['result'] === true){
 
@@ -622,12 +666,12 @@ class VersionController extends CodeController
         if(empty($project_id)){
             return self::format('project_id不能为空',401);
         }
-
         $list = Code::getversionlist($project_id,$version_id,session("login"));
-        if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
-            return self::format('未找到对应版本',401);
-        }
+
         if(Input::post("username") != self::$admin_username){
+            if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
+                return self::format('未找到对应版本',401);
+            }
             $is_self = false;
             foreach ($list['data']['list'] as $datum) {
                 if($datum['id'] == $version_id){
@@ -643,11 +687,13 @@ class VersionController extends CodeController
         }
 
         $admin = self::admin_login();
+
         if(!$admin){
             return self::format("上线失败",406,['version_id'=>$version_id]);
         }
 
         $return = Code::versiononline($version_id,session("admin_login"));
+        Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"版本上线");
 
         if($return && $return['result'] === true){
 
@@ -684,10 +730,11 @@ class VersionController extends CodeController
         }
 
         $list = Code::getversionlist($project_id,$version_id,session("login"));
-        if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
-            return self::format('未找到对应版本',401);
-        }
+
         if(Input::post("username") != self::$admin_username){
+            if(empty($list) or !isset($list['data']['list']) or  empty($list['data']['list']) ){
+                return self::format('未找到对应版本',401);
+            }
             $is_self = false;
             foreach ($list['data']['list'] as $datum) {
                 if($datum['id'] == $version_id){
@@ -708,6 +755,7 @@ class VersionController extends CodeController
         }
 
         $return = Code::versionrollback($version_id,session("admin_login"));
+        Code::addLog(['version_id'=>$version_id],$return,\Illuminate\Support\Facades\Route::currentRouteAction(),$this->username,1,"版本回滚");
 
         if($return && $return['result'] === true){
 
@@ -720,5 +768,51 @@ class VersionController extends CodeController
         }
 
         return self::format("回滚失败",405,['version_id'=>$version_id]);
+    }
+
+    /*
+     * 获取差异
+     */
+    public function getdiff(){
+        
+    }
+
+    /*
+     * 获取最近的版本
+     */
+    public function getCurrentVersion(){
+
+        $project_id     = Input::post("project_id","");
+
+        if(!session("login")){
+            return self::format('登录状态有误');
+        }
+
+        /*if(empty($project_id)){
+            return self::format('project_id不能为空',401);
+        }*/
+
+        $list = Code::getversionlist($project_id,0,session("login"));
+        $data = [];
+        if($list && isset($list['data']['list'][0])){
+            $tem = $list['data']['list'][0];
+            $data['version_id']     =   $tem['id']??"";
+            $data['version_name']   =   $tem['name']??"";
+            $data['version_status'] =   strip_tags($tem['status']);
+            $data['project_name']   =   $tem['project_name']??"";
+            $data['create_time']    =   date("Y-m-d H:i:s",$tem['create_time']);
+            $data['check_time']     =   !empty($tem['check_time'])?date("Y-m-d H:i:s",$tem['check_time']):'';
+            $data['test_time']      =   !empty($tem['test_time'])?date("Y-m-d H:i:s",$tem['test_time']):'';
+            $data['pub_time']       =   !empty($tem['pub_time'])?date("Y-m-d H:i:s",$tem['pub_time']):'';
+            $data['create_name']    =   $tem['create_name']??"";
+            $data['check_name']     =   $tem['check_name']??"";
+            $data['test_name']      =   $tem['test_name']??"";
+            $data['pub_name']       =   $tem['pub_name']??"";
+        }
+
+        return self::format('获取成功',0,$data);
+
+
+
     }
 }

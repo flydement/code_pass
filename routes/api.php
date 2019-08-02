@@ -26,6 +26,7 @@ Route::middleware(['codesign'])->group(function () {
     Route::any('line','\App\Http\Controllers\Code\VersionController@line');//上线
     Route::any('rollback','\App\Http\Controllers\Code\VersionController@rollback');//回滚
     Route::any('del','\App\Http\Controllers\Code\VersionController@delversion');//删除版本
+    Route::any('current','\App\Http\Controllers\Code\VersionController@getCurrentVersion');//获取最近的版本
 });
 
 Route::post('create', '\App\Http\Controllers\Code\CodeController@create');

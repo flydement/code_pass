@@ -4,6 +4,8 @@ namespace App;
 
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Input\Input;
 
 class Code extends Model
 {
@@ -451,6 +453,20 @@ class Code extends Model
     */
     public static function codeiconv($code = 'UTF-8',$code_m = 'GBK', $str = ''){
         return iconv($code,$code_m,$str);
+    }
+
+    /*
+     * add log
+     */
+    public static function addLog($param,$res,$actionname,$username,$req_part=1,$action_desc=''){
+        $save_log['req_params']     =   json_encode($param,JSON_UNESCAPED_UNICODE );
+        $save_log['result_params']  =   json_encode($res,JSON_UNESCAPED_UNICODE );
+        $save_log['user_name']      =   $username;
+        $save_log['action_name']    =   $actionname;
+        $save_log['req_part']       =   $req_part;
+        $save_log['action_desc']    =   $action_desc;
+        $save_log['createtime']     =   time();
+        DB::table('action_log')->insert($save_log);
     }
 
 }
